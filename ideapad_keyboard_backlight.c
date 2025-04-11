@@ -42,17 +42,17 @@ uint32_t device_io_control(HANDLE drv_handle, uint32_t func)
     }
 }
 
-int get_backlight_capability(HANDLE drv_handle)
+uint32_t get_backlight_capability(HANDLE drv_handle)
 {
     return device_io_control(drv_handle, BACKLIGHT_CAPABILITY);
 }
 
-int get_backlight_status(HANDLE drv_handle)
+uint32_t get_backlight_status(HANDLE drv_handle)
 {
     return device_io_control(drv_handle, BACKLIGHT_STATUS);
 }
 
-int set_backlight_level(HANDLE drv_handle, int level)
+uint32_t set_backlight_level(HANDLE drv_handle, int level)
 {
     uint32_t func = BACKLIGHT_AUTO;
     switch (level) {
@@ -64,9 +64,6 @@ int set_backlight_level(HANDLE drv_handle, int level)
             break;
         case 2:
             func = BACKLIGHT_LEVEL2;
-            break;
-        default:
-            func = BACKLIGHT_AUTO;
             break;
     }
     return device_io_control(drv_handle, func);
@@ -85,41 +82,55 @@ int main(int argc, char *argv[])
     }
     /* open */
     HANDLE drv_handle = CreateFileA("\\\\.\\EnergyDrv", GENERIC_READ, 0, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
-	if (drv_handle == INVALID_HANDLE_VALUE) {
+    if (drv_handle == INVALID_HANDLE_VALUE) {
         fprintf(stderr, "Error: Failed to find device, make sure Lenovo energy management driver is installed!\n");
-		return -1;
-	}
+        return -1;
+    }
     /* run */
     do {
+        /* cap */
         uint32_t cap = get_backlight_capability(drv_handle);
-        if ((cap & 1 != 1) && (cap >> 1) != 3) {
+        if (cap == (uint32_t) -1) {
+            break;
+        }
+        if ((cap & 1) != 1) {
+            fprintf(stderr, "Error: Failed to get capability!\n");
+            break;
+        }
+        if ((cap >> 1) != 3) {
             fprintf(stderr, "Error: Auto-level not supported!\n");
             break;
         }
+        /* status */
         uint32_t status = get_backlight_status(drv_handle);
-        if (cap & 1 != 1) {
+        if (status == (uint32_t) -1) {
+            break;
+        }
+        if ((status & 1) != 1) {
             fprintf(stderr, "Error: Failed to get current status!\n");
             break;
-        } else {
-            status = status >> 1;
-            int curr_level = -1;
-            if ((status & 0x8000) != 0x8000) {
-                curr_level = -1;
-                fprintf(stderr, "Error: Cannot set backlight when keyboard is disabled!\n");
-                break;
-            } else {
-                if ((status & 0x7fff) == 0) {
-                    curr_level = 0;
-                } else if ((status & 0x7fff) == 1) {
-                    curr_level = 1;
-                } else if ((status & 0x7fff) == 2) {
-                    curr_level = 2;
-                } else if ((status & 0x7fff) == 3) {
-                    curr_level = 3;
-                }
-            }
-            printf("Current level: %d\n", curr_level);
         }
+        status = status >> 1;
+        if ((status & 0x8000) != 0x8000) {
+            fprintf(stderr, "Error: Cannot set backlight when keyboard is disabled!\n");
+            break;
+        }
+        int curr_level = -1;
+        switch (status & 0x7fff) {
+            case 0:
+                curr_level = 0;
+                break;
+            case 1:
+                curr_level = 1;
+                break;
+            case 2:
+                curr_level = 2;
+                break;
+            case 3:
+                curr_level = 3;
+                break;
+        }
+        printf("Current level: %d\n", curr_level);
         set_backlight_level(drv_handle, level);
         printf("Finished setting level: %d\n", level);
     } while (FALSE);
