@@ -9,7 +9,7 @@ if (-not (Test-Path "$($program)-$($arch).exe")) {
     Expand-Archive -Path "$($program)_build.zip" -DestinationPath "."
 }
 
-$action = New-ScheduledTaskAction -Execute "$((Get-Location).Path)$($program)-$($arch).exe" -Argument "0"
+$action = New-ScheduledTaskAction -Execute "$((Get-Location).Path)\$($program)-$($arch).exe" -Argument "0"
 $trigger = New-ScheduledTaskTrigger -AtStartup
 $principal = New-ScheduledTaskPrincipal -UserId "SYSTEM" -LogonType ServiceAccount
 $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
