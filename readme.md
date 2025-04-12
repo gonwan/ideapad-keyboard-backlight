@@ -7,3 +7,5 @@ Run with:
 ```
 # <app.exe> [0|1|2|2]
 ```
+
+Add it to task scheduler for autostart, or simply run `setup.bat` as administrator.
