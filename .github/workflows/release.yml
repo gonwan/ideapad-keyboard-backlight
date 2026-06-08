@@ -4,9 +4,12 @@ on: workflow_dispatch
 
 jobs:
   build-win-x64:
-    runs-on: windows-2019
+    runs-on: windows-2022
     permissions:
       contents: write
+    defaults:
+      run:
+        shell: msys2 {0}
     steps:
       - uses: actions/checkout@v4
       - name: Set up MSYS2
@@ -16,6 +19,7 @@ jobs:
           cache: true
           update: true
           install: >-
+            git
             make
             zip
           pacboy: >-
@@ -23,11 +27,13 @@ jobs:
       - name: Get Version
         id: get-version
         run: |
-          VERSION=git describe --tags --abbrev=0
+          git fetch --tags --prune --unshallow
+          VERSION="$(git describe --tags --abbrev=0)"
           echo "VERSION=$VERSION" >> $GITHUB_ENV
-          echo "Version is \"${{ env.VERSION }}\""
       - name: Build
-        run: make package
+        run: |
+          echo "Version is \"${{ env.VERSION }}\""
+          make package
       - name: Upload Release Artifact
         uses: softprops/action-gh-release@v2
         with:
