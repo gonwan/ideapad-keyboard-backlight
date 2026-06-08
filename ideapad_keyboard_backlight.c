@@ -18,7 +18,7 @@
 #define ITS_MODE_AUTO               0
 #define ITS_MODE_COOL               1
 #define ITS_MODE_PERFORMANCE        2
-#define ITS_MODE_GEEK               3
+#define ITS_MODE_GEEK               3  /* not working on my XiaoXinPro 14 model */
 
 #define ITS_MODE_SCMSG_DISABLE      134
 #define ITS_MODE_SCMSG_ENABLE       135
@@ -128,7 +128,7 @@ int get_dispatcher_version()
     return rv;
 }
 
-void get_system_family(char *sys_family, int len, int to_lower) {
+void get_system_family(char *sys_family, int len) {
     HKEY hKey = NULL;
     do {
         LSTATUS status = RegOpenKeyExA(HKEY_LOCAL_MACHINE, REG_KEY_BIOS, 0, KEY_QUERY_VALUE, &hKey);
@@ -137,17 +137,14 @@ void get_system_family(char *sys_family, int len, int to_lower) {
         }
         DWORD dwType = 0;
         DWORD dwSize = 0;
-        status = RegQueryValueExA(hKey, REG_VAL_VERSION, NULL, &dwType, NULL, &dwSize);
-        if (status != ERROR_MORE_DATA) {
+        status = RegQueryValueExA(hKey, REG_VAL_SYSFAMILY, NULL, &dwType, NULL, &dwSize);
+        if (status != ERROR_SUCCESS) {
             break;
         }
         char *szValue = malloc(dwSize);
         memset(szValue, 0, dwSize);
-        status = RegQueryValueExA(hKey, REG_VAL_VERSION, NULL, &dwType, (LPBYTE) szValue, &dwSize);
+        status = RegQueryValueExA(hKey, REG_VAL_SYSFAMILY, NULL, &dwType, (LPBYTE) szValue, &dwSize);
         if (status == ERROR_SUCCESS && dwType == REG_SZ) {
-            if (to_lower) {
-                CharLowerA(szValue);
-            }
             strncpy(sys_family, szValue, len-1);
         }
         free(szValue);
@@ -204,7 +201,7 @@ int set_its_mode(int its_mode)
         }
         return control_service(SERVICE_NAME_DISPATCHER, its_mode_scmsg);
     } else {
-        int its_mode_scmsg = ITS_MODE_SCMSG_INTELLIGENT;
+        int its_mode_scmsg = ITS_MODE_SCMSG_ENABLE;
         switch (its_mode) {
         case ITS_MODE_COOL:
             its_mode_scmsg = ITS_MODE_SCMSG_COOL;
@@ -216,16 +213,17 @@ int set_its_mode(int its_mode)
             its_mode_scmsg = ITS_MODE_SCMSG_GEEK;
             break;
         }
-        return control_service(SERVICE_NAME_DISPATCHER, its_mode_scmsg);
+        return control_service(SERVICE_NAME_ITS, its_mode_scmsg);
     }
 }
 
-int get_its_mode()
+int get_its_mode(const char *model)
 {
     int rv = ITS_MODE_NONE;
-    char sys_family[33] = { 0 };
-    get_system_family(sys_family, 33, 1);
-    int is_thinkbook = strstr(sys_family, "thinkbook") ? 1 : 0;
+    char *model_lower = strdup(model);
+    CharLowerA(model_lower);
+    int is_thinkbook = strstr(model_lower, "thinkbook") ? 1 : 0;
+    free(model_lower);
     int disp_version = get_dispatcher_version();
     if (disp_version >= DISPATCHER_VERSION_3) {
         HKEY hKey = NULL;
@@ -294,11 +292,16 @@ int get_its_mode()
                 rv = ITS_MODE_AUTO;
             }
             if (auto_setting == 1) {
-                if (curr_setting == 1) {
+                switch (curr_setting) {
+                case 1:
                     rv = ITS_MODE_COOL;
-                }
-                if (curr_setting == 3) {
+                    break;
+                case 3:
                     rv = ITS_MODE_PERFORMANCE;
+                    break;
+                case 4:
+                    rv = ITS_MODE_GEEK;
+                    break;
                 }
             }
         } while (FALSE);
@@ -309,22 +312,12 @@ int get_its_mode()
     return rv;
 }
 
-int main(int argc, char *argv[])
-{
-    if (argc != 2) {
-        fprintf(stderr, "Usage: %s [0|1|2|3]\n", get_base_name(argv[0]));
-        return -1;
-    }
-    int level = (int) strtol(argv[1], NULL, 0);
-    if (level < 0 || level > 3) {
-        fprintf(stderr, "Usage: %s [0|1|2|3]\n", get_base_name(argv[0]));
-        return -1;
-    }
+void run_keyboard_backlight(int level) {
     /* open */
     HANDLE drv_handle = CreateFileA("\\\\.\\EnergyDrv", GENERIC_READ, 0, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
     if (drv_handle == INVALID_HANDLE_VALUE) {
         fprintf(stderr, "Error: Failed to find device, make sure Lenovo energy management driver is installed!\n");
-        return -1;
+        return;
     }
     /* run */
     do {
@@ -370,11 +363,61 @@ int main(int argc, char *argv[])
                 curr_level = 3;
                 break;
         }
-        printf("Current level: %d\n", curr_level);
+        printf("Current backlight level: %d\n", curr_level);
         set_backlight_level(drv_handle, level);
-        printf("Finished setting level: %d\n", level);
+        printf("Finished setting backlight level: %d\n", level);
     } while (FALSE);
     /* close */
     CloseHandle(drv_handle);
+}
+
+void run_its_mode(const char *model, int mode) {
+    do {
+        int rv = get_its_mode(model);
+        if (rv == ITS_MODE_NONE) {
+            fprintf(stderr, "Error: Failed to get current its mode!\n");
+            break;
+        }
+        printf("Current its mode: %d\n", rv);
+        rv = set_its_mode(mode);
+        if (rv < 0) {
+            fprintf(stderr, "Error: Failed to set new its mode!\n");
+            break;
+        }
+        printf("Finished setting its mode: %d\n", mode);
+    } while (FALSE);
+}
+
+void usage(const char *name) {
+    fprintf(stderr, "Usage: %s --kbd [0|1|2|3] --its [0|1|2|3]\n", name);
+}
+
+int main(int argc, char *argv[])
+{
+    char *base_name = get_base_name(argv[0]);
+    if (argc != 3 && argc != 5) {
+        usage(base_name);
+        return -1;
+    }
+    char sys_family[33] = { 0 };
+    get_system_family(sys_family, 33);
+    printf("Your model: %s\n", sys_family);
+    for (int i = 1; i < argc; i++) {
+        if (!strcmp(argv[i], "--kbd")) {
+            int level = (int) strtol(argv[++i], NULL, 0);
+            if (level < 0 || level > 3) {
+                usage(base_name);
+                return -1;
+            }
+            run_keyboard_backlight(level);
+        } else if (!strcmp(argv[i], "--its")) {
+            int mode = (int) strtol(argv[++i], NULL, 0);
+            if (mode < 0 || mode > 3) {
+                usage(base_name);
+                return -1;
+            }
+            run_its_mode(sys_family, mode);
+        }
+    }
     return 0;
 }
