@@ -1,3 +1,4 @@
+#define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -12,6 +13,40 @@
 #define BACKLIGHT_LEVEL1        0x10033
 #define BACKLIGHT_LEVEL2        0x20033
 #define BACKLIGHT_AUTO          0x30033
+
+#define ITS_MODE_NONE               -1
+#define ITS_MODE_AUTO               0
+#define ITS_MODE_COOL               1
+#define ITS_MODE_PERFORMANCE        2
+#define ITS_MODE_GEEK               3
+
+#define ITS_MODE_SCMSG_DISABLE      134
+#define ITS_MODE_SCMSG_ENABLE       135
+#define ITS_MODE_SCMSG_COOL         146
+#define ITS_MODE_SCMSG_PERFORMANCE  148
+#define ITS_MODE_SCMSG_INTELLIGENT  163
+#define ITS_MODE_SCMSG_BSM          164
+#define ITS_MODE_SCMSG_EPM          165
+#define ITS_MODE_SCMSG_GEEK         172
+
+#define DISPATCHER_VERSION_3        8192
+
+#define SERVICE_NAME_ITS            "LITSSVC"
+#define SERVICE_NAME_DISPATCHER     "LenovoProcessManagement"
+
+#define REG_KEY_BIOS                "HARDWARE\\DESCRIPTION\\System\\BIOS"
+#define REG_KEY_LITSSVC_IC          "SYSTEM\\CurrentControlSet\\Services\\LITSSVC\\LNBITS\\IC"
+#define REG_KEY_LITSSVC_MMC         "SYSTEM\\CurrentControlSet\\Services\\LITSSVC\\LNBITS\\IC\\MMC"
+#define REG_KEY_DISPATCHER          "SYSTEM\\CurrentControlSet\\Services\\LenovoProcessManagement\\Performance\\PowerSlider"
+
+#define REG_VAL_SYSFAMILY           "SystemFamily"
+#define REG_VAL_VERSION             "Version"
+#define REG_VAL_CAPABILITY          "Capability"
+#define REG_VAL_AUTO_SETTING        "AutomaticModeSetting"
+#define REG_VAL_CURRENT_SETTING     "CurrentSetting"
+#define REG_VAL_ITS_FN_CAP          "ITS_FN_Capability"
+#define REG_VAL_ITS_CUR_SET         "ITS_CurrentSetting"
+#define REG_VAL_ITS_CUR_SET_V       "ITS_CurrentSettingV"
 
 
 char *get_base_name(char *path)
@@ -67,6 +102,211 @@ uint32_t set_backlight_level(HANDLE drv_handle, int level)
             break;
     }
     return device_io_control(drv_handle, func);
+}
+
+int get_dispatcher_version()
+{
+    HKEY hKey = NULL;
+    int rv = -1;
+    do {
+        LSTATUS status = RegOpenKeyExA(HKEY_LOCAL_MACHINE, REG_KEY_DISPATCHER, 0, KEY_QUERY_VALUE, &hKey);
+        if (status != ERROR_SUCCESS) {
+            break;
+        }
+        DWORD dwType = 0;
+        DWORD dwValue = 0;
+        DWORD dwSize = sizeof(DWORD);
+        status = RegQueryValueExA(hKey, REG_VAL_VERSION, NULL, &dwType, (LPBYTE) &dwValue, &dwSize);
+        if (status != ERROR_SUCCESS || dwType != REG_DWORD) {
+            break;
+        }
+        rv = (int) dwValue;
+    } while (FALSE);
+    if (hKey != NULL) {
+        RegCloseKey(hKey);
+    }
+    return rv;
+}
+
+void get_system_family(char *sys_family, int len, int to_lower) {
+    HKEY hKey = NULL;
+    do {
+        LSTATUS status = RegOpenKeyExA(HKEY_LOCAL_MACHINE, REG_KEY_BIOS, 0, KEY_QUERY_VALUE, &hKey);
+        if (status != ERROR_SUCCESS) {
+            break;
+        }
+        DWORD dwType = 0;
+        DWORD dwSize = 0;
+        status = RegQueryValueExA(hKey, REG_VAL_VERSION, NULL, &dwType, NULL, &dwSize);
+        if (status != ERROR_MORE_DATA) {
+            break;
+        }
+        char *szValue = malloc(dwSize);
+        memset(szValue, 0, dwSize);
+        status = RegQueryValueExA(hKey, REG_VAL_VERSION, NULL, &dwType, (LPBYTE) szValue, &dwSize);
+        if (status == ERROR_SUCCESS && dwType == REG_SZ) {
+            if (to_lower) {
+                CharLowerA(szValue);
+            }
+            strncpy(sys_family, szValue, len-1);
+        }
+        free(szValue);
+    } while (FALSE);
+    if (hKey != NULL) {
+        RegCloseKey(hKey);
+    }
+}
+
+int control_service(const char *svc_name, int its_mode_scmsg)
+{
+    SC_HANDLE hSCManager = NULL;
+    SC_HANDLE hService = NULL;
+    int rv = -1;
+    do {
+        hSCManager = OpenSCManagerA(NULL, NULL, SC_MANAGER_CONNECT);
+        if (hSCManager == NULL) {
+            break;
+        }
+        hService = OpenServiceA(hSCManager, svc_name, SERVICE_QUERY_STATUS | SERVICE_USER_DEFINED_CONTROL);
+        if (hService == NULL) {
+            break;
+        }
+        SERVICE_STATUS serviceStatus;
+        if (ControlService(hService, (DWORD) its_mode_scmsg, &serviceStatus) == 0) {
+            break;
+        }
+        rv = 0;
+    } while (FALSE);
+    if (hService != NULL) {
+        CloseServiceHandle(hService);
+    }
+    if (hSCManager != NULL) {
+        CloseServiceHandle(hSCManager);
+    }
+    return rv;
+}
+
+int set_its_mode(int its_mode)
+{
+    int disp_version = get_dispatcher_version();
+    if (disp_version >= DISPATCHER_VERSION_3) {
+        int its_mode_scmsg = ITS_MODE_SCMSG_INTELLIGENT;
+        switch (its_mode) {
+        case ITS_MODE_COOL:
+            its_mode_scmsg = ITS_MODE_SCMSG_BSM;
+            break;
+        case ITS_MODE_PERFORMANCE:
+            its_mode_scmsg = ITS_MODE_SCMSG_EPM;
+            break;
+        case ITS_MODE_GEEK:
+            its_mode_scmsg = ITS_MODE_SCMSG_GEEK;
+            break;
+        }
+        return control_service(SERVICE_NAME_DISPATCHER, its_mode_scmsg);
+    } else {
+        int its_mode_scmsg = ITS_MODE_SCMSG_INTELLIGENT;
+        switch (its_mode) {
+        case ITS_MODE_COOL:
+            its_mode_scmsg = ITS_MODE_SCMSG_COOL;
+            break;
+        case ITS_MODE_PERFORMANCE:
+            its_mode_scmsg = ITS_MODE_SCMSG_PERFORMANCE;
+            break;
+        case ITS_MODE_GEEK:
+            its_mode_scmsg = ITS_MODE_SCMSG_GEEK;
+            break;
+        }
+        return control_service(SERVICE_NAME_DISPATCHER, its_mode_scmsg);
+    }
+}
+
+int get_its_mode()
+{
+    int rv = ITS_MODE_NONE;
+    char sys_family[33] = { 0 };
+    get_system_family(sys_family, 33, 1);
+    int is_thinkbook = strstr(sys_family, "thinkbook") ? 1 : 0;
+    int disp_version = get_dispatcher_version();
+    if (disp_version >= DISPATCHER_VERSION_3) {
+        HKEY hKey = NULL;
+        do {
+            LSTATUS status = RegOpenKeyExA(HKEY_LOCAL_MACHINE, REG_KEY_DISPATCHER, 0, KEY_QUERY_VALUE, &hKey);
+            if (status != ERROR_SUCCESS) {
+                break;
+            }
+            DWORD dwType = 0;
+            DWORD dwValue = 0;
+            DWORD dwSize = sizeof(DWORD);
+            status = RegQueryValueExA(hKey, REG_VAL_ITS_FN_CAP, NULL, &dwType, (LPBYTE) &dwValue, &dwSize);
+            if (status != ERROR_SUCCESS || dwType != REG_DWORD) {
+                break;
+            }
+            int capability = (int) dwValue;
+            if (!is_thinkbook) {
+                capability &= ~0x10;
+            }
+            int use_versioned = (capability & 0x10) != 0;
+            char *setting_key = use_versioned ? REG_VAL_ITS_CUR_SET_V : REG_VAL_ITS_CUR_SET;
+            status = RegQueryValueExA(hKey, setting_key, NULL, &dwType, (LPBYTE) &dwValue, &dwSize);
+            if (status != ERROR_SUCCESS || dwType != REG_DWORD) {
+                break;
+            }
+            int curr_setting = (int) dwValue;
+            switch (curr_setting) {
+            case 0:
+                rv = ITS_MODE_AUTO;
+                break;
+            case 1:
+                rv = ITS_MODE_COOL;
+                break;
+            case 3:
+                rv = ITS_MODE_PERFORMANCE;
+                break;
+            case 4:
+                rv = ITS_MODE_GEEK;
+                break;
+            }
+        } while (FALSE);
+        if (hKey != NULL) {
+            RegCloseKey(hKey);
+        }
+    } else {
+        HKEY hKey = NULL;
+        do {
+            LSTATUS status = RegOpenKeyExA(HKEY_LOCAL_MACHINE, REG_KEY_LITSSVC_MMC, 0, KEY_QUERY_VALUE, &hKey);
+            if (status != ERROR_SUCCESS) {
+                break;
+            }
+            DWORD dwType = 0;
+            DWORD dwValue = 0;
+            DWORD dwSize = sizeof(DWORD);
+            status = RegQueryValueExA(hKey, REG_VAL_AUTO_SETTING, NULL, &dwType, (LPBYTE) &dwValue, &dwSize);
+            if (status != ERROR_SUCCESS && dwType != REG_DWORD) {
+                break;
+            }
+            int auto_setting = (int) dwValue;
+            status = RegQueryValueExA(hKey, REG_VAL_CURRENT_SETTING, NULL, &dwType, (LPBYTE) &dwValue, &dwSize);
+            if (status != ERROR_SUCCESS || dwType != REG_DWORD) {
+                break;
+            }
+            int curr_setting = (int) dwValue;
+            if (auto_setting == 2 && curr_setting == 0) {
+                rv = ITS_MODE_AUTO;
+            }
+            if (auto_setting == 1) {
+                if (curr_setting == 1) {
+                    rv = ITS_MODE_COOL;
+                }
+                if (curr_setting == 3) {
+                    rv = ITS_MODE_PERFORMANCE;
+                }
+            }
+        } while (FALSE);
+        if (hKey != NULL) {
+            RegCloseKey(hKey);
+        }
+    }
+    return rv;
 }
 
 int main(int argc, char *argv[])
