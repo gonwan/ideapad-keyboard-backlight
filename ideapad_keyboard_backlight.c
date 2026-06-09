@@ -5,29 +5,35 @@
 #include <stdint.h>
 
 
-#define IOCTL_BACKLIGHT         0x83102144
+#define IOCTL_BACKLIGHT             0x83102144
+#define IOCTL_BATTERY_CHARGE        0x831020F8
+#define IOCTL_BATTERY_CHARGE_NIGHT  0x83102150
 
-#define BACKLIGHT_CAPABILITY    0x01
-#define BACKLIGHT_STATUS        0x32
-#define BACKLIGHT_OFF           0x00033
-#define BACKLIGHT_LEVEL1        0x10033
-#define BACKLIGHT_LEVEL2        0x20033
-#define BACKLIGHT_AUTO          0x30033
+#define BACKLIGHT_CAPABILITY        0x01
+#define BACKLIGHT_STATUS            0x32
+#define BACKLIGHT_OFF               0x00033
+#define BACKLIGHT_LEVEL1            0x10033
+#define BACKLIGHT_LEVEL2            0x20033
+#define BACKLIGHT_AUTO              0x30033
 
-#define ITS_MODE_NONE               -1
-#define ITS_MODE_AUTO               0
-#define ITS_MODE_COOL               1
-#define ITS_MODE_PERFORMANCE        2
-#define ITS_MODE_GEEK               3  /* not working on my XiaoXinPro 14 model */
+#define CHARGE_QUICK_STATUS         0xff
+#define CHARGE_QUICK_ON             0x07
+#define CHARGE_QUICK_OFF            0x08
+#define CHARGE_STORAGE_STATUS       0xff
+#define CHARGE_STORAGE_ON           0x03
+#define CHARGE_STORAGE_FF           0x05
+#define CHARGE_NIGHT_STATUS         0x80000012
+#define CHARGE_NIGHT_ON             0x11
+#define CHARGE_NIGHT_OFF            0x12
 
-#define ITS_MODE_SCMSG_DISABLE      134
-#define ITS_MODE_SCMSG_ENABLE       135
-#define ITS_MODE_SCMSG_COOL         146
-#define ITS_MODE_SCMSG_PERFORMANCE  148
-#define ITS_MODE_SCMSG_INTELLIGENT  163
-#define ITS_MODE_SCMSG_BSM          164
-#define ITS_MODE_SCMSG_EPM          165
-#define ITS_MODE_SCMSG_GEEK         172
+#define ITS_MODE_SCMSG_DISABLE      0x86
+#define ITS_MODE_SCMSG_ENABLE       0x87
+#define ITS_MODE_SCMSG_COOL         0x92
+#define ITS_MODE_SCMSG_PERFORMANCE  0x94
+#define ITS_MODE_SCMSG_INTELLIGENT  0xA3
+#define ITS_MODE_SCMSG_BSM          0xA4
+#define ITS_MODE_SCMSG_EPM          0xA5
+#define ITS_MODE_SCMSG_GEEK         0xAC
 
 #define DISPATCHER_VERSION_3        8192
 
@@ -47,6 +53,31 @@
 #define REG_VAL_ITS_FN_CAP          "ITS_FN_Capability"
 #define REG_VAL_ITS_CUR_SET         "ITS_CurrentSetting"
 #define REG_VAL_ITS_CUR_SET_V       "ITS_CurrentSettingV"
+
+
+typedef enum _backlight_level_e {
+    BACKLIGHT_LEVEL_NONE = -1,
+    BACKLIGHT_LEVEL_OFF,
+    BACKLIGHT_LEVEL_1,
+    BACKLIGHT_LEVEL_2,
+    BACKLIGHT_LEVEL_AUTO
+} backlight_level_e;
+
+typedef enum _charge_mode_e {
+    CHARGE_MODE_NONE = -1,
+    CHARGE_MODE_NORMAL,
+    CHARGE_MODE_QUICK,
+    CHARGE_MODE_STORAGE,
+    CHARGE_MODE_NIGHT
+} charge_mode_e;
+
+typedef enum _its_mode_e {
+    ITS_MODE_NONE = -1,
+    ITS_MODE_AUTO,
+    ITS_MODE_COOL,
+    ITS_MODE_PERFORMANCE,
+    ITS_MODE_GEEK  /* not working on my XiaoXinPro 14 model */
+} its_mode_e;
 
 
 char *get_base_name(char *path)
@@ -87,17 +118,17 @@ uint32_t get_backlight_status(HANDLE drv_handle)
     return device_io_control(drv_handle, BACKLIGHT_STATUS);
 }
 
-uint32_t set_backlight_level(HANDLE drv_handle, int level)
+uint32_t set_backlight_level(HANDLE drv_handle, backlight_level_e level)
 {
     uint32_t func = BACKLIGHT_AUTO;
     switch (level) {
-        case 0:
+        case BACKLIGHT_LEVEL_OFF:
             func = BACKLIGHT_OFF;
             break;
-        case 1:
+        case BACKLIGHT_LEVEL_1:
             func = BACKLIGHT_LEVEL1;
             break;
-        case 2:
+        case BACKLIGHT_LEVEL_2:
             func = BACKLIGHT_LEVEL2;
             break;
     }
@@ -183,7 +214,7 @@ int control_service(const char *svc_name, int its_mode_scmsg)
     return rv;
 }
 
-int set_its_mode(int its_mode)
+int set_its_mode(its_mode_e its_mode)
 {
     int disp_version = get_dispatcher_version();
     if (disp_version >= DISPATCHER_VERSION_3) {
@@ -217,9 +248,9 @@ int set_its_mode(int its_mode)
     }
 }
 
-int get_its_mode(const char *model)
+its_mode_e get_its_mode(const char *model)
 {
-    int rv = ITS_MODE_NONE;
+    its_mode_e rv = ITS_MODE_NONE;
     char *model_lower = strdup(model);
     CharLowerA(model_lower);
     int is_thinkbook = strstr(model_lower, "thinkbook") ? 1 : 0;
@@ -312,7 +343,7 @@ int get_its_mode(const char *model)
     return rv;
 }
 
-void run_keyboard_backlight(int level) {
+void run_backlight_level(backlight_level_e level) {
     /* open */
     HANDLE drv_handle = CreateFileA("\\\\.\\EnergyDrv", GENERIC_READ, 0, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
     if (drv_handle == INVALID_HANDLE_VALUE) {
@@ -348,54 +379,69 @@ void run_keyboard_backlight(int level) {
             fprintf(stderr, "Error: Cannot set backlight when keyboard is disabled!\n");
             break;
         }
-        int curr_level = -1;
+        backlight_level_e curr_level = BACKLIGHT_LEVEL_NONE;
         switch (status & 0x7fff) {
             case 0:
-                curr_level = 0;
+                curr_level = BACKLIGHT_LEVEL_OFF;
                 break;
             case 1:
-                curr_level = 1;
+                curr_level = BACKLIGHT_LEVEL_1;
                 break;
             case 2:
-                curr_level = 2;
+                curr_level = BACKLIGHT_LEVEL_2;
                 break;
             case 3:
-                curr_level = 3;
+                curr_level = BACKLIGHT_LEVEL_AUTO;
                 break;
         }
-        printf("Current backlight level: %d\n", curr_level);
+        printf("Current backlight level: %d\n", (int) curr_level);
         set_backlight_level(drv_handle, level);
-        printf("Finished setting backlight level: %d\n", level);
+        printf("Finished setting backlight level: %d\n", (int) level);
     } while (FALSE);
     /* close */
     CloseHandle(drv_handle);
 }
 
-void run_its_mode(const char *model, int mode) {
+void run_charge_mode(charge_mode_e mode) {
+    /* open */
+    HANDLE drv_handle = CreateFileA("\\\\.\\EnergyDrv", GENERIC_READ, 0, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (drv_handle == INVALID_HANDLE_VALUE) {
+        fprintf(stderr, "Error: Failed to find device, make sure Lenovo energy management driver is installed!\n");
+        return;
+    }
+    /* run */
     do {
-        int rv = get_its_mode(model);
+    
+    } while (FALSE);
+    /* close */
+    CloseHandle(drv_handle);
+}
+
+void run_its_mode(const char *model, its_mode_e mode) {
+    do {
+        its_mode_e rv = get_its_mode(model);
         if (rv == ITS_MODE_NONE) {
             fprintf(stderr, "Error: Failed to get current its mode!\n");
             break;
         }
-        printf("Current its mode: %d\n", rv);
+        printf("Current its mode: %d\n", (int) rv);
         rv = set_its_mode(mode);
         if (rv < 0) {
             fprintf(stderr, "Error: Failed to set new its mode!\n");
             break;
         }
-        printf("Finished setting its mode: %d\n", mode);
+        printf("Finished setting its mode: %d\n", (int) mode);
     } while (FALSE);
 }
 
 void usage(const char *name) {
-    fprintf(stderr, "Usage: %s --kbd [0|1|2|3] --its [0|1|2|3]\n", name);
+    fprintf(stderr, "Usage: %s --backlight [0|1|2|3] --charge [0|1|2|3] --its [0|1|2|3]\n", name);
 }
 
 int main(int argc, char *argv[])
 {
     char *base_name = get_base_name(argv[0]);
-    if (argc != 3 && argc != 5) {
+    if (argc != 3 && argc != 5 && argc != 7) {
         usage(base_name);
         return -1;
     }
@@ -403,20 +449,27 @@ int main(int argc, char *argv[])
     get_system_family(sys_family, 33);
     printf("Your model: %s\n", sys_family);
     for (int i = 1; i < argc; i++) {
-        if (!strcmp(argv[i], "--kbd")) {
+        if (!strcmp(argv[i], "--backlight")) {
             int level = (int) strtol(argv[++i], NULL, 0);
             if (level < 0 || level > 3) {
                 usage(base_name);
                 return -1;
             }
-            run_keyboard_backlight(level);
+            run_backlight_level((backlight_level_e) level);
+        } else if (!strcmp(argv[i], "--charge")) {
+            int mode = (int) strtol(argv[++i], NULL, 0);
+            if (mode < 0 || mode > 3) {
+                usage(base_name);
+                return -1;
+            }
+            run_charge_mode((charge_mode_e) mode);
         } else if (!strcmp(argv[i], "--its")) {
             int mode = (int) strtol(argv[++i], NULL, 0);
             if (mode < 0 || mode > 3) {
                 usage(base_name);
                 return -1;
             }
-            run_its_mode(sys_family, mode);
+            run_its_mode(sys_family, (its_mode_e) mode);
         }
     }
     return 0;
