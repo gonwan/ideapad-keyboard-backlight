@@ -1,5 +1,5 @@
 ### Ideapad Keyboard Backlight
-Control keyboard backlight on your own! Now also supports switching ITS(Intelligent Thermal System) modes!
+Control keyboard backlight on your own! Now also supports switching charging modes and ITS(Intelligent Thermal System) modes!
 
 Should work on Lenovo Ideapad & Xiaoxin models. Also works on Thinkbook models as reported by several users.
 

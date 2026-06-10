@@ -6,7 +6,7 @@
 
 
 #define IOCTL_BACKLIGHT             0x83102144
-#define IOCTL_BATTERY_CHARGE        0x831020F8
+#define IOCTL_BATTERY_CHARGE        0x831020f8
 #define IOCTL_BATTERY_CHARGE_NIGHT  0x83102150
 
 #define BACKLIGHT_CAPABILITY        0x01
@@ -16,24 +16,23 @@
 #define BACKLIGHT_LEVEL2            0x20033
 #define BACKLIGHT_AUTO              0x30033
 
-#define CHARGE_QUICK_STATUS         0xff
+#define CHARGE_STATUS               0xffffffff  /* 0xff */
 #define CHARGE_QUICK_ON             0x07
 #define CHARGE_QUICK_OFF            0x08
-#define CHARGE_STORAGE_STATUS       0xff
 #define CHARGE_STORAGE_ON           0x03
-#define CHARGE_STORAGE_FF           0x05
-#define CHARGE_NIGHT_STATUS         0x80000012
-#define CHARGE_NIGHT_ON             0x11
+#define CHARGE_STORAGE_OFF          0x05
+#define CHARGE_NIGHT_STATUS         0x11
+#define CHARGE_NIGHT_ON             0x80000012
 #define CHARGE_NIGHT_OFF            0x12
 
-#define ITS_MODE_SCMSG_DISABLE      0x86
-#define ITS_MODE_SCMSG_ENABLE       0x87
-#define ITS_MODE_SCMSG_COOL         0x92
-#define ITS_MODE_SCMSG_PERFORMANCE  0x94
-#define ITS_MODE_SCMSG_INTELLIGENT  0xA3
-#define ITS_MODE_SCMSG_BSM          0xA4
-#define ITS_MODE_SCMSG_EPM          0xA5
-#define ITS_MODE_SCMSG_GEEK         0xAC
+#define ITS_SCMSG_DISABLE           0x86
+#define ITS_SCMSG_ENABLE            0x87
+#define ITS_SCMSG_COOL              0x92
+#define ITS_SCMSG_PERFORMANCE       0x94
+#define ITS_SCMSG_INTELLIGENT       0xa3
+#define ITS_SCMSG_BSM               0xa4
+#define ITS_SCMSG_EPM               0xa5
+#define ITS_SCMSG_GEEK              0xac
 
 #define DISPATCHER_VERSION_3        8192
 
@@ -41,11 +40,14 @@
 #define SERVICE_NAME_DISPATCHER     "LenovoProcessManagement"
 
 #define REG_KEY_BIOS                "HARDWARE\\DESCRIPTION\\System\\BIOS"
+#define REG_KEY_CHARGE_LEGACY       "Software\\Lenovo\\iMController\\Contracts\\SystemManagement.BatteryMgmt"   /* HKCU */ 
+#define REG_KEY_CHARGE_VANTAGE      "Software\\Lenovo\\VantageService\\AddinData\\IdeaNotebookAddin"            /* HKCU */
 #define REG_KEY_LITSSVC_IC          "SYSTEM\\CurrentControlSet\\Services\\LITSSVC\\LNBITS\\IC"
 #define REG_KEY_LITSSVC_MMC         "SYSTEM\\CurrentControlSet\\Services\\LITSSVC\\LNBITS\\IC\\MMC"
 #define REG_KEY_DISPATCHER          "SYSTEM\\CurrentControlSet\\Services\\LenovoProcessManagement\\Performance\\PowerSlider"
 
 #define REG_VAL_SYSFAMILY           "SystemFamily"
+#define REG_VAL_CHARGE_MODE         "BatteryChargeMode"
 #define REG_VAL_VERSION             "Version"
 #define REG_VAL_CAPABILITY          "Capability"
 #define REG_VAL_AUTO_SETTING        "AutomaticModeSetting"
@@ -95,13 +97,12 @@ char *get_base_name(char *path)
     return (an == NULL) ? path : (an + 1);
 }
 
-uint32_t device_io_control(HANDLE drv_handle, uint32_t func)
+uint32_t device_io_control(HANDLE drv_handle, uint32_t ctl, uint32_t func)
 {
-    char outbuff[4] = { 0 };
-    DWORD ret_len = 0;
-    if (DeviceIoControl(drv_handle, IOCTL_BACKLIGHT, &func, sizeof(func), outbuff, sizeof(outbuff), &ret_len, NULL)) {
-        outbuff[ret_len] = '\0';
-        return (outbuff[3] << 24) | (outbuff[2] << 16) | (outbuff[1] << 8) | outbuff[0];
+    uint32_t rv = 0;
+    DWORD len = 0;
+    if (DeviceIoControl(drv_handle, ctl, &func, sizeof(func), &rv, sizeof(rv), &len, NULL)) {
+        return rv;
     } else {
         fprintf(stderr, "Error: DeviceIoControl failed, func=%d\n", func);
         return (uint32_t) -1;
@@ -110,12 +111,12 @@ uint32_t device_io_control(HANDLE drv_handle, uint32_t func)
 
 uint32_t get_backlight_capability(HANDLE drv_handle)
 {
-    return device_io_control(drv_handle, BACKLIGHT_CAPABILITY);
+    return device_io_control(drv_handle, IOCTL_BACKLIGHT, BACKLIGHT_CAPABILITY);
 }
 
 uint32_t get_backlight_status(HANDLE drv_handle)
 {
-    return device_io_control(drv_handle, BACKLIGHT_STATUS);
+    return device_io_control(drv_handle, IOCTL_BACKLIGHT, BACKLIGHT_STATUS);
 }
 
 uint32_t set_backlight_level(HANDLE drv_handle, backlight_level_e level)
@@ -132,27 +133,83 @@ uint32_t set_backlight_level(HANDLE drv_handle, backlight_level_e level)
             func = BACKLIGHT_LEVEL2;
             break;
     }
-    return device_io_control(drv_handle, func);
+    return device_io_control(drv_handle, IOCTL_BACKLIGHT, func);
 }
 
-int get_dispatcher_version()
+uint32_t get_charge_mode(HANDLE drv_handle, int is_night)
+{
+    if (is_night) {
+        return device_io_control(drv_handle, IOCTL_BATTERY_CHARGE_NIGHT, CHARGE_NIGHT_STATUS);
+    } else {
+        return device_io_control(drv_handle, IOCTL_BATTERY_CHARGE, CHARGE_STATUS);
+    }
+}
+
+uint32_t set_charge_mode(HANDLE drv_handle, charge_mode_e curr_mode, charge_mode_e mode)
+{
+    if (curr_mode == mode) {
+        return 0;
+    }
+    switch (curr_mode) {
+    case CHARGE_MODE_QUICK:
+        device_io_control(drv_handle, IOCTL_BATTERY_CHARGE, CHARGE_QUICK_OFF);
+        break;
+    case CHARGE_MODE_STORAGE:
+        device_io_control(drv_handle, IOCTL_BATTERY_CHARGE, CHARGE_STORAGE_OFF);
+        break;
+    case CHARGE_MODE_NIGHT:
+        device_io_control(drv_handle, IOCTL_BATTERY_CHARGE_NIGHT, CHARGE_NIGHT_OFF);
+        break;
+    }
+    uint32_t rv = 0;
+    switch (mode) {
+    case CHARGE_MODE_QUICK:
+        rv = device_io_control(drv_handle, IOCTL_BATTERY_CHARGE, CHARGE_QUICK_ON);
+        break;
+    case CHARGE_MODE_STORAGE:
+        rv = device_io_control(drv_handle, IOCTL_BATTERY_CHARGE, CHARGE_STORAGE_ON);
+        break;
+    case CHARGE_MODE_NIGHT:
+        rv = device_io_control(drv_handle, IOCTL_BATTERY_CHARGE_NIGHT, CHARGE_NIGHT_ON);
+        break;
+    }
+    return rv;
+}
+
+int set_charge_mode_registry(charge_mode_e mode)
 {
     HKEY hKey = NULL;
     int rv = -1;
     do {
-        LSTATUS status = RegOpenKeyExA(HKEY_LOCAL_MACHINE, REG_KEY_DISPATCHER, 0, KEY_QUERY_VALUE, &hKey);
+        int is_legacy = 1;
+        LSTATUS status = RegOpenKeyExA(HKEY_CURRENT_USER, REG_KEY_CHARGE_LEGACY, 0, KEY_SET_VALUE, &hKey);
+        if (status != ERROR_SUCCESS) {
+            is_legacy = 0;
+            status = RegOpenKeyExA(HKEY_CURRENT_USER, REG_KEY_CHARGE_VANTAGE, 0, KEY_SET_VALUE, &hKey);
+            if (status != ERROR_SUCCESS) {
+                break;
+            }
+        }
+        const char *szMode = "Normal";
+        switch (mode) {
+        case CHARGE_MODE_QUICK:
+            szMode = "Quick";
+            break;
+        case CHARGE_MODE_STORAGE:
+            szMode = "Storage";
+            break;
+        case CHARGE_MODE_NIGHT:
+            if (is_legacy) {
+                szMode = "Night";
+            }
+            break;
+        }
+        status = RegSetValueExA(hKey, REG_VAL_CHARGE_MODE, 0, REG_EXPAND_SZ, szMode, strlen(szMode));
         if (status != ERROR_SUCCESS) {
             break;
         }
-        DWORD dwType = 0;
-        DWORD dwValue = 0;
-        DWORD dwSize = sizeof(DWORD);
-        status = RegQueryValueExA(hKey, REG_VAL_VERSION, NULL, &dwType, (LPBYTE) &dwValue, &dwSize);
-        if (status != ERROR_SUCCESS || dwType != REG_DWORD) {
-            break;
-        }
-        rv = (int) dwValue;
-    } while (FALSE);
+        rv = 0;
+    } while (0);
     if (hKey != NULL) {
         RegCloseKey(hKey);
     }
@@ -179,13 +236,37 @@ void get_system_family(char *sys_family, int len) {
             strncpy(sys_family, szValue, len-1);
         }
         free(szValue);
-    } while (FALSE);
+    } while (0);
     if (hKey != NULL) {
         RegCloseKey(hKey);
     }
 }
 
-int control_service(const char *svc_name, int its_mode_scmsg)
+int get_dispatcher_version()
+{
+    HKEY hKey = NULL;
+    int rv = -1;
+    do {
+        LSTATUS status = RegOpenKeyExA(HKEY_LOCAL_MACHINE, REG_KEY_DISPATCHER, 0, KEY_QUERY_VALUE, &hKey);
+        if (status != ERROR_SUCCESS) {
+            break;
+        }
+        DWORD dwType = 0;
+        DWORD dwValue = 0;
+        DWORD dwSize = sizeof(DWORD);
+        status = RegQueryValueExA(hKey, REG_VAL_VERSION, NULL, &dwType, (LPBYTE) &dwValue, &dwSize);
+        if (status != ERROR_SUCCESS || dwType != REG_DWORD) {
+            break;
+        }
+        rv = (int) dwValue;
+    } while (0);
+    if (hKey != NULL) {
+        RegCloseKey(hKey);
+    }
+    return rv;
+}
+
+int control_service(const char *svc_name, int its_scmsg)
 {
     SC_HANDLE hSCManager = NULL;
     SC_HANDLE hService = NULL;
@@ -200,11 +281,11 @@ int control_service(const char *svc_name, int its_mode_scmsg)
             break;
         }
         SERVICE_STATUS serviceStatus;
-        if (ControlService(hService, (DWORD) its_mode_scmsg, &serviceStatus) == 0) {
+        if (ControlService(hService, (DWORD) its_scmsg, &serviceStatus) == 0) {
             break;
         }
         rv = 0;
-    } while (FALSE);
+    } while (0);
     if (hService != NULL) {
         CloseServiceHandle(hService);
     }
@@ -218,33 +299,33 @@ int set_its_mode(its_mode_e its_mode)
 {
     int disp_version = get_dispatcher_version();
     if (disp_version >= DISPATCHER_VERSION_3) {
-        int its_mode_scmsg = ITS_MODE_SCMSG_INTELLIGENT;
+        int its_scmsg = ITS_SCMSG_INTELLIGENT;
         switch (its_mode) {
         case ITS_MODE_COOL:
-            its_mode_scmsg = ITS_MODE_SCMSG_BSM;
+            its_scmsg = ITS_SCMSG_BSM;
             break;
         case ITS_MODE_PERFORMANCE:
-            its_mode_scmsg = ITS_MODE_SCMSG_EPM;
+            its_scmsg = ITS_SCMSG_EPM;
             break;
         case ITS_MODE_GEEK:
-            its_mode_scmsg = ITS_MODE_SCMSG_GEEK;
+            its_scmsg = ITS_SCMSG_GEEK;
             break;
         }
-        return control_service(SERVICE_NAME_DISPATCHER, its_mode_scmsg);
+        return control_service(SERVICE_NAME_DISPATCHER, its_scmsg);
     } else {
-        int its_mode_scmsg = ITS_MODE_SCMSG_ENABLE;
+        int its_scmsg = ITS_SCMSG_ENABLE;
         switch (its_mode) {
         case ITS_MODE_COOL:
-            its_mode_scmsg = ITS_MODE_SCMSG_COOL;
+            its_scmsg = ITS_SCMSG_COOL;
             break;
         case ITS_MODE_PERFORMANCE:
-            its_mode_scmsg = ITS_MODE_SCMSG_PERFORMANCE;
+            its_scmsg = ITS_SCMSG_PERFORMANCE;
             break;
         case ITS_MODE_GEEK:
-            its_mode_scmsg = ITS_MODE_SCMSG_GEEK;
+            its_scmsg = ITS_SCMSG_GEEK;
             break;
         }
-        return control_service(SERVICE_NAME_ITS, its_mode_scmsg);
+        return control_service(SERVICE_NAME_ITS, its_scmsg);
     }
 }
 
@@ -295,7 +376,7 @@ its_mode_e get_its_mode(const char *model)
                 rv = ITS_MODE_GEEK;
                 break;
             }
-        } while (FALSE);
+        } while (0);
         if (hKey != NULL) {
             RegCloseKey(hKey);
         }
@@ -335,7 +416,7 @@ its_mode_e get_its_mode(const char *model)
                     break;
                 }
             }
-        } while (FALSE);
+        } while (0);
         if (hKey != NULL) {
             RegCloseKey(hKey);
         }
@@ -397,7 +478,7 @@ void run_backlight_level(backlight_level_e level) {
         printf("Current backlight level: %d\n", (int) curr_level);
         set_backlight_level(drv_handle, level);
         printf("Finished setting backlight level: %d\n", (int) level);
-    } while (FALSE);
+    } while (0);
     /* close */
     CloseHandle(drv_handle);
 }
@@ -411,8 +492,37 @@ void run_charge_mode(charge_mode_e mode) {
     }
     /* run */
     do {
-    
-    } while (FALSE);
+        /* get */
+        charge_mode_e curr_mode = CHARGE_MODE_NONE;
+        uint32_t m0 = get_charge_mode(drv_handle, 0);
+        uint32_t m1 = get_charge_mode(drv_handle, 1);
+        if (m0 == (uint32_t) -1 || m1 == (uint32_t) -1) {
+            break;
+        }
+        if ((m0 & 0x04) != 0) {
+            curr_mode = CHARGE_MODE_QUICK;
+        } else if ((m0 & 0x20) != 0) {
+            curr_mode = CHARGE_MODE_STORAGE;
+        } else {
+            curr_mode = CHARGE_MODE_NORMAL;
+        }
+        if (curr_mode == CHARGE_MODE_NORMAL) {
+            if ((m1 & 0x01) != 0) {
+                if ((m1 & 0x10) != 0) {
+                    curr_mode = CHARGE_MODE_NIGHT;
+                }
+            }
+        }
+        printf("Current charge mode: %d\n", (int) curr_mode);
+        /* set */
+        set_charge_mode(drv_handle, curr_mode, mode);
+        int rv = set_charge_mode_registry(mode);
+        if (rv < 0) {
+            fprintf(stderr, "Error: Failed to set new charge mode!\n");
+            break;
+        }
+        printf("Finished setting charge mode: %d\n", (int) mode);
+    } while (0);
     /* close */
     CloseHandle(drv_handle);
 }
@@ -431,7 +541,7 @@ void run_its_mode(const char *model, its_mode_e mode) {
             break;
         }
         printf("Finished setting its mode: %d\n", (int) mode);
-    } while (FALSE);
+    } while (0);
 }
 
 void usage(const char *name) {
