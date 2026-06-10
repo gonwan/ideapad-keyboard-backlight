@@ -278,10 +278,13 @@ int control_service(const char *svc_name, int its_scmsg)
         }
         hService = OpenServiceA(hSCManager, svc_name, SERVICE_QUERY_STATUS | SERVICE_USER_DEFINED_CONTROL);
         if (hService == NULL) {
+            fprintf(stderr, "Error: Failed to find service: %s\n", svc_name);
             break;
         }
         SERVICE_STATUS serviceStatus;
         if (ControlService(hService, (DWORD) its_scmsg, &serviceStatus) == 0) {
+            /* ERROR_SERVICE_NOT_ACTIVE or ERROR_SERVICE_CANNOT_ACCEPT_CTRL possible when run from task scheduler */
+            fprintf(stderr, "Error: Failed to control service: %s(%d)\n", svc_name, GetLastError());
             break;
         }
         rv = 0;
@@ -293,40 +296,6 @@ int control_service(const char *svc_name, int its_scmsg)
         CloseServiceHandle(hSCManager);
     }
     return rv;
-}
-
-int set_its_mode(its_mode_e its_mode)
-{
-    int disp_version = get_dispatcher_version();
-    if (disp_version >= DISPATCHER_VERSION_3) {
-        int its_scmsg = ITS_SCMSG_INTELLIGENT;
-        switch (its_mode) {
-        case ITS_MODE_COOL:
-            its_scmsg = ITS_SCMSG_BSM;
-            break;
-        case ITS_MODE_PERFORMANCE:
-            its_scmsg = ITS_SCMSG_EPM;
-            break;
-        case ITS_MODE_GEEK:
-            its_scmsg = ITS_SCMSG_GEEK;
-            break;
-        }
-        return control_service(SERVICE_NAME_DISPATCHER, its_scmsg);
-    } else {
-        int its_scmsg = ITS_SCMSG_ENABLE;
-        switch (its_mode) {
-        case ITS_MODE_COOL:
-            its_scmsg = ITS_SCMSG_COOL;
-            break;
-        case ITS_MODE_PERFORMANCE:
-            its_scmsg = ITS_SCMSG_PERFORMANCE;
-            break;
-        case ITS_MODE_GEEK:
-            its_scmsg = ITS_SCMSG_GEEK;
-            break;
-        }
-        return control_service(SERVICE_NAME_ITS, its_scmsg);
-    }
 }
 
 its_mode_e get_its_mode(const char *model)
@@ -422,6 +391,40 @@ its_mode_e get_its_mode(const char *model)
         }
     }
     return rv;
+}
+
+int set_its_mode(its_mode_e its_mode)
+{
+    int disp_version = get_dispatcher_version();
+    if (disp_version >= DISPATCHER_VERSION_3) {
+        int its_scmsg = ITS_SCMSG_INTELLIGENT;
+        switch (its_mode) {
+        case ITS_MODE_COOL:
+            its_scmsg = ITS_SCMSG_BSM;
+            break;
+        case ITS_MODE_PERFORMANCE:
+            its_scmsg = ITS_SCMSG_EPM;
+            break;
+        case ITS_MODE_GEEK:
+            its_scmsg = ITS_SCMSG_GEEK;
+            break;
+        }
+        return control_service(SERVICE_NAME_DISPATCHER, its_scmsg);
+    } else {
+        int its_scmsg = ITS_SCMSG_ENABLE;
+        switch (its_mode) {
+        case ITS_MODE_COOL:
+            its_scmsg = ITS_SCMSG_COOL;
+            break;
+        case ITS_MODE_PERFORMANCE:
+            its_scmsg = ITS_SCMSG_PERFORMANCE;
+            break;
+        case ITS_MODE_GEEK:
+            its_scmsg = ITS_SCMSG_GEEK;
+            break;
+        }
+        return control_service(SERVICE_NAME_ITS, its_scmsg);
+    }
 }
 
 void run_backlight_level(backlight_level_e level) {
