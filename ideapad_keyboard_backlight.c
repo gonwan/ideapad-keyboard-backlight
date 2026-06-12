@@ -500,6 +500,7 @@ void run_charge_mode(charge_mode_e mode) {
         uint32_t m0 = get_charge_mode(drv_handle, 0);
         uint32_t m1 = get_charge_mode(drv_handle, 1);
         if (m0 == (uint32_t) -1 || m1 == (uint32_t) -1) {
+            fprintf(stderr, "Error: Failed to get current charge mode!\n");
             break;
         }
         if ((m0 & 0x04) != 0) {
